@@ -1,0 +1,7 @@
+streamlit
+httpx
+pypdf
+python-docx
+pillow
+pytesseract
+pdf2image
