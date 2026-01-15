@@ -1,80 +1,68 @@
+#OPENROUTER_API_KEY = "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"
+import streamlit as st
 import io
 import httpx
-import streamlit as st
 from pypdf import PdfReader
 from docx import Document
 from PIL import Image
 import pytesseract
 
 # ================= CONFIG =================
-OPENROUTER_API_KEY = "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"
+OPENROUTER_API_KEY = st.secrets.get("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", "")
 MODEL_NAME = "mistralai/mistral-7b-instruct:free"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 # =========================================
 
-st.set_page_config(page_title="Document RAG Chat", layout="centered")
+st.set_page_config(page_title="Document RAG Chatbot", layout="wide")
+st.title("📄 Document Q&A Chatbot (RAG)")
+st.caption("Ask multiple questions from your uploaded document")
 
-# ---------- SESSION STATE ----------
+# ---------- Session State ----------
 if "chunks" not in st.session_state:
     st.session_state.chunks = []
-
 if "history" not in st.session_state:
     st.session_state.history = []
 
-# ---------- RAG HELPERS ----------
-
+# ---------- Helper Functions ----------
 def extract_text(file, name):
     data = file.read()
 
     if name.endswith(".pdf"):
         reader = PdfReader(io.BytesIO(data))
         return "".join(p.extract_text() or "" for p in reader.pages)
-
     elif name.endswith(".txt"):
         return data.decode()
-
     elif name.endswith(".docx"):
         doc = Document(io.BytesIO(data))
         return "\n".join(p.text for p in doc.paragraphs)
-
     elif name.endswith((".png", ".jpg", ".jpeg")):
-        return pytesseract.image_to_string(
-            Image.open(io.BytesIO(data))
-        )
-
+        return pytesseract.image_to_string(Image.open(io.BytesIO(data)))
     return ""
-
 
 def chunk_text(text, size=400):
     return [text[i:i+size] for i in range(0, len(text), size)]
 
-
 def retrieve(chunks, question, top_k=3):
     q_words = set(question.lower().split())
     scored = []
-
     for c in chunks:
         score = len(q_words & set(c.lower().split()))
         scored.append((score, c))
-
     scored.sort(reverse=True)
     return [c for _, c in scored[:top_k]]
-
 
 def ask_llm(context, question, history):
     messages = [
         {
             "role": "system",
             "content": (
-                "Answer ONLY from the provided context. "
-                "If not found say: Not found in document."
+                "Answer ONLY using the provided context. "
+                "If not found, say 'Not found in document.'\n\n" + context
             )
-        },
-        {
-            "role": "user",
-            "content": f"Context:\n{context}\n\nQuestion:\n{question}"
         }
-    ] + history
+    ]
+    messages.extend(history)
+    messages.append({"role": "user", "content": question})
 
     payload = {"model": MODEL_NAME, "messages": messages}
     headers = {
@@ -82,19 +70,19 @@ def ask_llm(context, question, history):
         "Content-Type": "application/json"
     }
 
-    res = httpx.post(
-        OPENROUTER_URL,
-        json=payload,
-        headers=headers,
-        timeout=60
-    )
+    try:
+        with httpx.Client(timeout=60) as client:
+            res = client.post(OPENROUTER_URL, json=payload, headers=headers)
+        if res.status_code != 200:
+            return f"❌ API Error {res.status_code}: {res.text}"
+        data = res.json()
+        if "choices" not in data:
+            return f"❌ LLM Error: {data}"
+        return data["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"❌ Exception: {e}"
 
-    return res.json()["choices"][0]["message"]["content"]
-
-# ---------- UI ----------
-
-st.title("📄 Document Q&A Chatbot (RAG)")
-
+# ---------- File Upload ----------
 uploaded_file = st.file_uploader(
     "Upload PDF / DOCX / TXT / Image",
     type=["pdf", "txt", "docx", "png", "jpg", "jpeg"]
@@ -102,44 +90,41 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file:
     text = extract_text(uploaded_file, uploaded_file.name.lower())
-
     if text.strip():
         st.session_state.chunks = chunk_text(text[:6000])
         st.session_state.history = []
-        st.success("File uploaded successfully!")
+        st.success("✅ Document processed successfully!")
 
-# ---------- CHAT ----------
-if st.session_state.chunks:
-    for msg in st.session_state.history:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
+# ---------- Chat UI ----------
+st.divider()
+st.subheader("💬 Ask Questions")
 
-    question = st.chat_input("Ask a question...")
+question = st.text_input("Type your question here")
 
-    if question:
-        st.session_state.history.append(
-            {"role": "user", "content": question}
-        )
+col1, col2 = st.columns([1, 1])
+with col1:
+    ask_btn = st.button("Ask")
+with col2:
+    reset_btn = st.button("Reset Chat")
 
-        with st.chat_message("user"):
-            st.write(question)
+if reset_btn:
+    st.session_state.history = []
+    st.success("🔄 Chat reset")
 
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                context = "\n\n".join(
-                    retrieve(st.session_state.chunks, question)
-                )
-                answer = ask_llm(
-                    context,
-                    question,
-                    st.session_state.history
-                )
-                st.write(answer)
+if ask_btn and question:
+    if not st.session_state.chunks:
+        st.warning("⚠️ Upload a document first")
+    else:
+        with st.spinner("Thinking..."):
+            context = "\n\n".join(retrieve(st.session_state.chunks, question))
+            answer = ask_llm(context, question, st.session_state.history)
+        st.session_state.history.append({"role": "user", "content": question})
+        st.session_state.history.append({"role": "assistant", "content": answer})
 
-        st.session_state.history.append(
-            {"role": "assistant", "content": answer}
-        )
-
-    if st.button("🔄 Reset Chat"):
-        st.session_state.history = []
-        st.experimental_rerun()
+# ---------- Display chat ----------
+st.divider()
+for msg in st.session_state.history:
+    if msg["role"] == "user":
+        st.markdown(f"🧑 **You:** {msg['content']}")
+    else:
+        st.markdown(f"🤖 **Bot:** {msg['content']}")
