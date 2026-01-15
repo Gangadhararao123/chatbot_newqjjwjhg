@@ -9,7 +9,7 @@ import pytesseract
 
 # ================= CONFIG =================
 # Get API key from Streamlit secrets
-OPENROUTER_API_KEY = st.secrets.get("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", "")
+OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
 MODEL_NAME = "mistralai/mistral-7b-instruct:free"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 # =========================================
