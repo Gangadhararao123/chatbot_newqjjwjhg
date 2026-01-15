@@ -8,14 +8,21 @@ from PIL import Image
 import pytesseract
 
 # ================= CONFIG =================
+# Get API key from Streamlit secrets
 OPENROUTER_API_KEY = st.secrets.get("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", "")
 MODEL_NAME = "mistralai/mistral-7b-instruct:free"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 # =========================================
 
+# Check API key
+if not OPENROUTER_API_KEY:
+    st.error("⚠️ OpenRouter API key is missing. Add it to Streamlit secrets!")
+    st.stop()
+
+# ---------- Page Config ----------
 st.set_page_config(page_title="Document RAG Chatbot", layout="wide")
 st.title("📄 Document Q&A Chatbot (RAG)")
-st.caption("Ask multiple questions from your uploaded document")
+st.caption("Upload a document and ask multiple questions")
 
 # ---------- Session State ----------
 if "chunks" not in st.session_state:
@@ -25,8 +32,8 @@ if "history" not in st.session_state:
 
 # ---------- Helper Functions ----------
 def extract_text(file, name):
+    """Extract text from PDF, TXT, DOCX, or Image"""
     data = file.read()
-
     if name.endswith(".pdf"):
         reader = PdfReader(io.BytesIO(data))
         return "".join(p.extract_text() or "" for p in reader.pages)
@@ -40,9 +47,11 @@ def extract_text(file, name):
     return ""
 
 def chunk_text(text, size=400):
+    """Split text into chunks"""
     return [text[i:i+size] for i in range(0, len(text), size)]
 
 def retrieve(chunks, question, top_k=3):
+    """Simple keyword-based retrieval"""
     q_words = set(question.lower().split())
     scored = []
     for c in chunks:
@@ -52,12 +61,14 @@ def retrieve(chunks, question, top_k=3):
     return [c for _, c in scored[:top_k]]
 
 def ask_llm(context, question, history):
+    """Send context + question to OpenRouter LLM"""
     messages = [
         {
             "role": "system",
             "content": (
                 "Answer ONLY using the provided context. "
-                "If not found, say 'Not found in document.'\n\n" + context
+                "If answer not present, say: 'Not found in document.'\n\n"
+                + context
             )
         }
     ]
@@ -91,7 +102,7 @@ uploaded_file = st.file_uploader(
 if uploaded_file:
     text = extract_text(uploaded_file, uploaded_file.name.lower())
     if text.strip():
-        st.session_state.chunks = chunk_text(text[:6000])
+        st.session_state.chunks = chunk_text(text[:6000])  # limit for API
         st.session_state.history = []
         st.success("✅ Document processed successfully!")
 
